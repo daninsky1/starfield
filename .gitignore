@@ -1,0 +1,8 @@
+*.vim
+*.ilk
+*.pdb
+*.obj
+*.exe
+*.swp
+.vs/
+
