@@ -5,6 +5,8 @@
 #include <iostream>
 #include <vector>
 
+#include <omp.h>
+
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
 
@@ -35,8 +37,6 @@ const float gamma = 2.2f, ungamma = 1.0f / gamma;
 
 // Define an optimal palette (generated with NeuQuant). The colors are sorted
 // by luminosity (for reasons that become apparent later).
-// NOTE(daniel): The monst significant byte has to be 0 to not interfere with
-// the 3 color integer value
 // NOTE(daniel): 0x FF FF FF FF - 0x PP RR GG BB. PP: padding
 uint32_t quanti_colors[pal_size] {
     0x00000000,0x00000001,0x00010101,0x00010102,0x00020101,0x00010201,0x00010202,0x00030102,0x00020202,0x00020203,
@@ -107,26 +107,11 @@ int main()
         col.a = 0xFF;
 
         color_table[p] = col.c;
-        //printf("%d, %x\n", p, color_table[p]);
         
         pal[p][0] = ((float)R / 63.0f); palG[p][0] = powf(pal[p][0], gamma);
         pal[p][1] = ((float)G / 63.0f); palG[p][1] = powf(pal[p][1], gamma);
         pal[p][2] = ((float)B / 63.0f); palG[p][2] = powf(pal[p][2], gamma);
-
-        //printf("%f, %f, %f", palG[p][0], palG[p][1], palG[p][2]);
-        //std::cin.ignore();
-
-        //color_table[p] = col.c;
-        //printf("red: %x\n", R);
-        //printf("red: %f\n", pal[p][0]);
-        //printf("green: %x\n", G);
-        //printf("green: %f\n", pal[p][1]);
-        //printf("blue: %x\n", B);
-        //printf("blue: %f\n", pal[p][2]);
-        //printf("color: %x\n", col.c);
-        //std::cin.ignore();
     }
-    //std::cin.ignore();
 
     const int cand_count = 64;     // color candidate count
     int cand_list[cand_count];
@@ -135,12 +120,10 @@ int main()
     int dither8x8[8][8];
     int q, p;
     for (int y = 0; y < 8; ++y) {
-        // READY !!! ===========================================================
         for (int x = 0; x < 8; ++x) {
             q = x ^ y;
             p = (x & 4) / 4 + (x & 2) * 2 + (x & 1) * 16;
             q = (q & 4) / 2 + (q & 2) * 4 + (q & 1) * 32;
-            // NOTE(daniel): This 64 maybe has connection to the cand_count
             dither8x8[y][x] = (p + q) * cand_count / 64;
         }
     }
@@ -150,7 +133,6 @@ int main()
     std::vector<int> starx(N), stary(N), starz(N);
     std::vector<float> starR(N), starG(N), starB(N);
     for (int c = 0; c < N; ++c) {
-        // READY !!! ===========================================================
         // Random RGB color            Random 3D position
         starR[c] = rand_float() + 0.01f; starx[c] = lrintf(rand_float() * 1000.0f) - 500;
         starG[c] = rand_float() + 0.01f; stary[c] = lrintf(rand_float() * 1000.0f) - 500;
@@ -164,10 +146,9 @@ int main()
         starG[c] *= 1.0f / maxhue;
         starB[c] *= 1.0f / maxhue;
     }
-    // READY !!! ===============================================================
     // Main loop
     std::vector<float> px(N), py(N), radius(N), radsquared(N), szfactor(N);
-    // Blue buffer
+    // Blur buffer
     std::vector<std::vector<float>> blur(64'000, std::vector<float>(3));
     float ambient = 0.05f / sqrtf((float)N);
 
@@ -184,7 +165,6 @@ int main()
 
         // Move each star
         for (int c = 0; c < N; ++c) {
-        // READY !!! ===========================================================
             int newz = starz[c] - 2;
             if (newz <= 1) {
 rerandomize:
@@ -206,43 +186,28 @@ rerandomize:
         }
 
         // Render each pixel
-        int cc = 0;
+        int bi = 0;
         for (int y = -99; y <= 100; ++y) {
             for (int x = -159; x <= 160; ++x) {
-                float R = blur[cc][0];
-                float G = blur[cc][1];
-                float B = blur[cc][2];
-                //printf("%f, %f, %f\n", R, G, B);
-                //std::cin.ignore();
-//
-// READY !!! ==================================================================
-//
+                float R = blur[bi][0];
+                float G = blur[bi][1];
+                float B = blur[bi][2];
                 for (int c = 0; c < N; ++c) {
-                // READY !!! ===================================================
                     float distx = (float)x - px[c];
                     float disty = (float)y - py[c];
-                    //printf("%f, %f", distx, disty);
-                    //std::cin.ignore();
                     float distsquared = distx * distx + disty * disty;
                     if (distsquared < radsquared[c]) {
                         float distance = sqrtf(distsquared);
-                        //printf("%f", distsquared);
-                        //std::cin.ignore();
                         float scaleddist = distance / radius[c];
                         float sz = (1.0f - sqrtf(scaleddist)) * szfactor[c];
                         R += starR[c] * sz + ambient;
                         G += starG[c] * sz + ambient;
                         B += starB[c] * sz + ambient;
                     }
-                    //printf("%f, %f, %f\n", R, G, B);
                 }
-                //printf("%f, %f, %f\n", R, G, B);
-                //std::cin.ignore();
-                // Save the color for motion blur (fade it a little)
-                // READY !!! ===================================================
-                blur[cc][0] = R * 0.83f;
-                blur[cc][1] = G * 0.83f;
-                blur[cc][2] = B * 0.83f;
+                blur[bi][0] = R * 0.83f;
+                blur[bi][1] = G * 0.83f;
+                blur[bi][2] = B * 0.83f;
                 // Leak (some of) possible excess brightness to other color channels
                 // NOTE: This algorithm was fixed and improved after the Youtube video
                 float luma = R * 0.299f + G * 0.298f + B * 0.114f;
@@ -278,10 +243,6 @@ rerandomize:
                         B = (B - luma) * sat + luma;
                     }
                 }
-                //printf("%f, %f, %f", blur[cc][0], blur[cc][1], blur[cc][2]);
-                //printf("%f, %f", luma, sat);
-                //printf("%f, %f, %f, %f, %f", R, G, B, luma, sat);
-                //std::cin.ignore();
                 // Quantize (use gamma-aware Knoll-Yliluoma positional dithering)
                 float errorR = 0, gammaR = powf(R, gamma);
                 float errorG = 0, gammaG = powf(G, gamma);
@@ -291,8 +252,6 @@ rerandomize:
                     float tryR = powf(clamp(gammaR + errorR), ungamma);
                     float tryG = powf(clamp(gammaG + errorG), ungamma);
                     float tryB = powf(clamp(gammaB + errorB), ungamma);
-                    //printf("%f, %f, %f\n", tryR, tryG, tryB);
-                    //std::cin.ignore();
 
                     // Find out which palette color is the best match
                     int chosen = 0;
@@ -305,20 +264,12 @@ rerandomize:
                         if ((p == 0) || (test < best)) {
                             best = test; chosen = p;
                         }
-                        //printf("%f, %f, %f\n", eR, eG, eB);
-                        //printf("%f", test);
-                        //std::cin.ignore();
                     }
                     cand_list[c] = chosen;
                     // Find out how much it differs from the desired value
                     errorR = gammaR - palG[chosen][0];
                     errorG = gammaG - palG[chosen][1];
                     errorB = gammaB - palG[chosen][2];
-                    //printf("%f, %f, %f\n", gammaR, gammaG, gammaB);
-                    //printf("%f, %f, %f", errorR, errorG, errorB);
-                    //printf("%d\n", chosen);
-                    //printf("%f, %f, %f", palG[chosen][0], palG[chosen][1], palG[chosen][2]);
-                    //std::cin.ignore();
                 }
                 // Sort the color candidate table by luma.
                 // Since palette colors are already sorted by luma, we can
@@ -337,11 +288,8 @@ rerandomize:
                 // NOTE: Double-buffering was removed for QB64 because it does
                 // not support the assembler function.
                 uint32_t color = color_table[cand_list[dither8x8[x & 7][y & 7]]];
-                
-                //printf("(%d, %d), cand_i:%d, cand_v:%d, c:%#010x", x, y, dither8x8[x&7][x&7], cand_list[dither8x8[x&7][x&7]], color);
-                //std::cin.ignore();
                 *(pixel+(x+159)+((y+99)*W)) = color;
-                cc++;
+                bi++;
             }
         }
 
@@ -349,7 +297,5 @@ rerandomize:
         fprintf(stderr, "Writing %s...\n", buf);
         stbi_write_jpg(buf, W, H, channels, im, 100);
         free(im);
-
-        std::cin.ignore();
     }
 }
