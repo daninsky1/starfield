@@ -114,7 +114,6 @@ int main()
     }
 
     const int cand_count = 64;     // color candidate count
-    int cand_list[cand_count];
     
     // Set up a 8x8 bayer-dithering matrix
     int dither8x8[8][8];
@@ -132,11 +131,17 @@ int main()
     const int N = 25000;
     std::vector<int> starx(N), stary(N), starz(N);
     std::vector<float> starR(N), starG(N), starB(N);
+
+    constexpr int W = 320, H = 200;
+    int hW = W/2, hH = H/2;
+    float fieldx = 1000.0f;
+    float fieldy = 1000.0f;
+    float fieldz = 400.0f;
     for (int c = 0; c < N; ++c) {
-        // Random RGB color            Random 3D position
-        starR[c] = rand_float() + 0.01f; starx[c] = lrintf(rand_float() * 1000.0f) - 500;
-        starG[c] = rand_float() + 0.01f; stary[c] = lrintf(rand_float() * 1000.0f) - 500;
-        starB[c] = rand_float() + 0.01f; starz[c] = lrintf(rand_float() * 400.0f) + 1;
+        // Random RGB color              Random 3D position
+        starR[c] = rand_float() + 0.01f; starx[c] = lrintf(rand_float() * fieldx) - fieldx/2;
+        starG[c] = rand_float() + 0.01f; stary[c] = lrintf(rand_float() * fieldy) - fieldy/2;
+        starB[c] = rand_float() + 0.01f; starz[c] = lrintf(rand_float() * fieldz);
 
         // normalize hue (maximize brightness)
         float maxhue = starR[c];
@@ -149,13 +154,16 @@ int main()
     // Main loop
     std::vector<float> px(N), py(N), radius(N), radsquared(N), szfactor(N);
     // Blur buffer
-    std::vector<std::vector<float>> blur(64'000, std::vector<float>(3));
-    float ambient = 0.05f / sqrtf((float)N);
+    constexpr int blur_sz = W * H;
+    std::vector<std::vector<float>> blur(blur_sz, std::vector<float>(3));
+    const float ambient = 0.05f / sqrtf((float)N);
+    float cop = 0.0f; // Center of Projection
+    float vp = 0.0f;    // Vanishing Point
 
-    const unsigned W = 320, H = 200;
 
-    int frames = 1000;
+    int frames = 1440; // 1 sec at 24 frames
     for (int f = 0; f < frames; ++f) {
+        double stime = omp_get_wtime();
         fprintf(stderr, "Begins frame %d\n", f);
 
         const unsigned channels = 4;
@@ -166,19 +174,19 @@ int main()
         // Move each star
         for (int c = 0; c < N; ++c) {
             int newz = starz[c] - 2;
-            if (newz <= 1) {
+            if (newz < 1) {
 rerandomize:
-                newz = 1000 - (int)(rand_float() * 10.0f);
-                starx[c] = lrintf(rand_float() * 1000.0f) - 500;
-                stary[c] = lrintf(rand_float() * 1000.0f) - 500;
+                newz = fieldz;
+                starx[c] = lrintf(rand_float() * fieldx) - fieldx/2;
+                stary[c] = lrintf(rand_float() * fieldy) - fieldy/2;
             }
             starz[c] = newz;
             // Do perspective transformation
             px[c] = (float)starx[c] * 200.0f / (float)starz[c];
             py[c] = (float)stary[c] * 180.0f / (float)starz[c];
             radius[c] = 900.0f / (float)(starz[c] - 1);
-            if ((fabsf(px[c]) + radius[c]) > 230.0f) goto rerandomize;
-            if ((fabsf(py[c]) + radius[c]) > 180.0f) goto rerandomize;
+            if ((fabsf(px[c]) + radius[c]) > hW*1.1f) goto rerandomize;
+            if ((fabsf(py[c]) + radius[c]) > hH*1.1f) goto rerandomize;
             radsquared[c] = radius[c] * radius[c];
             szfactor[c] = (1.0f - (float)starz[c] / 400.0f);
             if ((szfactor[c]) < 0.0f) szfactor[c] = 0;
@@ -186,115 +194,135 @@ rerandomize:
         }
 
         // Render each pixel
-        int bi = 0;
-        for (int y = -99; y <= 100; ++y) {
-            for (int x = -159; x <= 160; ++x) {
-                float R = blur[bi][0];
-                float G = blur[bi][1];
-                float B = blur[bi][2];
-                for (int c = 0; c < N; ++c) {
-                    float distx = (float)x - px[c];
-                    float disty = (float)y - py[c];
-                    float distsquared = distx * distx + disty * disty;
-                    if (distsquared < radsquared[c]) {
-                        float distance = sqrtf(distsquared);
-                        float scaleddist = distance / radius[c];
-                        float sz = (1.0f - sqrtf(scaleddist)) * szfactor[c];
-                        R += starR[c] * sz + ambient;
-                        G += starG[c] * sz + ambient;
-                        B += starB[c] * sz + ambient;
-                    }
-                }
-                blur[bi][0] = R * 0.83f;
-                blur[bi][1] = G * 0.83f;
-                blur[bi][2] = B * 0.83f;
-                // Leak (some of) possible excess brightness to other color channels
-                // NOTE: This algorithm was fixed and improved after the Youtube video
-                float luma = R * 0.299f + G * 0.298f + B * 0.114f;
-                float sat = 1.0f;
-                if (luma >= 1.0f) {
-                    R = 1.0f; G = 1.0f; B = 1.0f;
-                }
-                else if (luma <= 0.0f) {
-                    R = 0.0f; G = 0.0f; B = 0.0f;
-                }
-                else {
-                    if (R > 1.0f) {
-                        sat = min(sat, (luma - 1.0f)/ (luma - R));
-                    }
-                    else if (R < 0.0f) {
-                        sat = min(sat, luma / (luma - R));
-                    }
-                    if (G > 1.0f) {
-                        sat = min(sat, (luma - 1.0f)/ (luma - G));
-                    }
-                    else if (G < 0.0f) {
-                        sat = min(sat, luma / (luma - G));
-                    }
-                    if (B > 1.0f) {
-                        sat = min(sat, (luma - 1.0f)/ (luma - B));
-                    }
-                    else if (B < 0.0f) {
-                        sat = min(sat, luma / (luma - B));
-                    }
-                    if (sat < 1.0f) {
-                        R = (R - luma) * sat + luma;
-                        G = (G - luma) * sat + luma;
-                        B = (B - luma) * sat + luma;
-                    }
-                }
-                // Quantize (use gamma-aware Knoll-Yliluoma positional dithering)
-                float errorR = 0, gammaR = powf(R, gamma);
-                float errorG = 0, gammaG = powf(G, gamma);
-                float errorB = 0, gammaB = powf(B, gamma);
-                // Create color candidate table
-                for (int c = 0; c < cand_count; ++c) {
-                    float tryR = powf(clamp(gammaR + errorR), ungamma);
-                    float tryG = powf(clamp(gammaG + errorG), ungamma);
-                    float tryB = powf(clamp(gammaB + errorB), ungamma);
-
-                    // Find out which palette color is the best match
-                    int chosen = 0;
-                    float best = 0.0f;
-                    for (int p = 0; p < 252; ++p) {
-                        float eR = pal[p][0] - tryR;
-                        float eG = pal[p][1] - tryG;
-                        float eB = pal[p][2] - tryB;
-                        float test = eR * eR + eG * eG + eB * eB;
-                        if ((p == 0) || (test < best)) {
-                            best = test; chosen = p;
+        omp_set_num_threads(4);
+#pragma omp parallel
+        {
+            for (int y = 0; y < H; ++y) {
+#pragma omp for schedule(static)
+                for (int x = 0; x < W; ++x) {
+                    int bi = (y*W)+x;       // Buffer index
+                    float R = blur[bi][0];
+                    float G = blur[bi][1];
+                    float B = blur[bi][2];
+                    for (int c = 0; c < N; ++c) {
+                        float distx = (float)(x-hW) - px[c];
+                        float disty = (float)(y-hH) - py[c];
+                        float distsquared = distx * distx + disty * disty;
+                        if (distsquared < radsquared[c]) {
+                            float distance = sqrtf(distsquared);
+                            float scaleddist = distance / radius[c];
+                            float sz = (1.0f - sqrtf(scaleddist)) * szfactor[c];
+                            R += starR[c] * sz + ambient;
+                            G += starG[c] * sz + ambient;
+                            B += starB[c] * sz + ambient;
                         }
                     }
-                    cand_list[c] = chosen;
-                    // Find out how much it differs from the desired value
-                    errorR = gammaR - palG[chosen][0];
-                    errorG = gammaG - palG[chosen][1];
-                    errorB = gammaB - palG[chosen][2];
-                }
-                // Sort the color candidate table by luma.
-                // Since palette colors are already sorted by luma, we can
-                // simply sort by palette indices.
-                // Use insertion sort. (A bug was fixed here after publication.)
-                for (int j = 1; j < cand_count; ++j) {
-                    unsigned k = cand_list[j];
-                    int i = j;
-                    for (; i >= 1; --i) {
-                        if (cand_list[i] <= k) break;
-                        cand_list[i] = cand_list[i - 1];
+                    blur[bi][0] = R * 0.83f;
+                    blur[bi][1] = G * 0.83f;
+                    blur[bi][2] = B * 0.83f;
+                    // Leak (some of) possible excess brightness to other color channels
+                    // NOTE: This algorithm was fixed and improved after the Youtube video
+                    float luma = R * 0.299f + G * 0.298f + B * 0.114f;
+                    float sat = 1.0f;
+                    if (luma >= 1.0f) {
+                        R = 1.0f; G = 1.0f; B = 1.0f;
                     }
-                    cand_list[i] = k;
+                    else if (luma <= 0.0f) {
+                        R = 0.0f; G = 0.0f; B = 0.0f;
+                    }
+                    else {
+                        if (R > 1.0f) {
+                            sat = min(sat, (luma - 1.0f)/ (luma - R));
+                        }
+                        else if (R < 0.0f) {
+                            sat = min(sat, luma / (luma - R));
+                        }
+                        if (G > 1.0f) {
+                            sat = min(sat, (luma - 1.0f)/ (luma - G));
+                        }
+                        else if (G < 0.0f) {
+                            sat = min(sat, luma / (luma - G));
+                        }
+                        if (B > 1.0f) {
+                            sat = min(sat, (luma - 1.0f)/ (luma - B));
+                        }
+                        else if (B < 0.0f) {
+                            sat = min(sat, luma / (luma - B));
+                        }
+                        if (sat < 1.0f) {
+                            R = (R - luma) * sat + luma;
+                            G = (G - luma) * sat + luma;
+                            B = (B - luma) * sat + luma;
+                        }
+                    }
+                    // Quantize (use gamma-aware Knoll-Yliluoma positional dithering)
+                    float errorR = 0, gammaR = powf(R, gamma);
+                    float errorG = 0, gammaG = powf(G, gamma);
+                    float errorB = 0, gammaB = powf(B, gamma);
+                    // Create color candidate table
+                    int cand_list[cand_count];
+                    for (int c = 0; c < cand_count; ++c) {
+                        float tryR = powf(clamp(gammaR + errorR), ungamma);
+                        float tryG = powf(clamp(gammaG + errorG), ungamma);
+                        float tryB = powf(clamp(gammaB + errorB), ungamma);
+
+                        // Find out which palette color is the best match
+                        int chosen = 0;
+                        float best = 0.0f;
+                        for (int p = 0; p < 253; ++p) {
+                            float eR = pal[p][0] - tryR;
+                            float eG = pal[p][1] - tryG;
+                            float eB = pal[p][2] - tryB;
+                            float test = eR * eR + eG * eG + eB * eB;
+                            if ((p == 0) || (test < best)) {
+                                best = test; chosen = p;
+                            }
+                        }
+                        cand_list[c] = chosen;
+                        // Find out how much it differs from the desired value
+                        errorR = gammaR - palG[chosen][0];
+                        errorG = gammaG - palG[chosen][1];
+                        errorB = gammaB - palG[chosen][2];
+                    }
+                    // Sort the color candidate table by luma.
+                    // Since palette colors are already sorted by luma, we can
+                    // simply sort by palette indices.
+                    // Use insertion sort. (A bug was fixed here after publication.)
+                    for (int j = 1; j < cand_count; ++j) {
+                        unsigned k = cand_list[j];
+                        int i = j;
+                        for (; i >= 1; --i) {
+                            if (cand_list[i] <= k) break;
+                            cand_list[i] = cand_list[i - 1];
+                        }
+                        cand_list[i] = k;
+                    }
+                    // Plot the pixel to the screen
+                    // NOTE: Double-buffering was removed for QB64 because it does
+                    // not support the assembler function.
+                    ABGRColor color;
+                    color.c = color_table[cand_list[dither8x8[x & 7][y & 7]]];
+                    float brightness_boost = 2.0f;
+                    float r_bb = (float)color.r * brightness_boost;
+                    float g_bb = (float)color.g * brightness_boost;
+                    float b_bb = (float)color.b * brightness_boost;
+                    // Clamp > 255.0f
+                    if (r_bb > 255.0f) r_bb = 255.0f;
+                    if (g_bb > 255.0f) g_bb = 255.0f;
+                    if (b_bb > 255.0f) b_bb = 255.0f;
+
+                    color.r = (uint8_t)r_bb;
+                    color.g = (uint8_t)g_bb;
+                    color.b = (uint8_t)b_bb;
+
+                    *(pixel+bi) = color.c;
                 }
-                // Plot the pixel to the screen
-                // NOTE: Double-buffering was removed for QB64 because it does
-                // not support the assembler function.
-                uint32_t color = color_table[cand_list[dither8x8[x & 7][y & 7]]];
-                *(pixel+(x+159)+((y+99)*W)) = color;
-                bi++;
             }
         }
 
+        double etime = omp_get_wtime();
         char buf[64]; sprintf(buf, "trace%04d.jpg", f);
-        fprintf(stderr, "Writing %s...\n", buf);
+        fprintf(stderr, "Finished frame %d in %f seconds.\nWriting: \"%s\"\n", f, etime-stime, buf);
         stbi_write_jpg(buf, W, H, channels, im, 100);
         free(im);
     }

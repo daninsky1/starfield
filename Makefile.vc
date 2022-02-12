@@ -1,2 +1,2 @@
 stars.exe: stars.cpp
-    cl stars.cpp /EHsc /Zi
+    cl stars.cpp /EHsc /Ox /openmp
