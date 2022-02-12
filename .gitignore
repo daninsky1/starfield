@@ -4,5 +4,7 @@
 *.obj
 *.exe
 *.swp
+*.jpg
+*.png
 .vs/
 

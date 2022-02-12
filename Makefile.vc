@@ -1,2 +1,2 @@
 stars.exe: stars.cpp
-    cl stars.cpp /Zi
+    cl stars.cpp /EHsc /Zi
