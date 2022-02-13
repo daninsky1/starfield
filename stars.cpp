@@ -137,11 +137,14 @@ int main()
     float fieldx = 1000.0f;
     float fieldy = 1000.0f;
     float fieldz = 400.0f;
+    int zclip = 1;
+    int velocity = 2;
     for (int c = 0; c < N; ++c) {
         // Random RGB color              Random 3D position
         starR[c] = rand_float() + 0.01f; starx[c] = lrintf(rand_float() * fieldx) - fieldx/2;
         starG[c] = rand_float() + 0.01f; stary[c] = lrintf(rand_float() * fieldy) - fieldy/2;
-        starB[c] = rand_float() + 0.01f; starz[c] = lrintf(rand_float() * fieldz);
+        starB[c] = rand_float() + 0.01f; starz[c] = lrintf(rand_float() * fieldz) + zclip;
+                                         //starz[c] = c % (int)fieldz + 1;
 
         // normalize hue (maximize brightness)
         float maxhue = starR[c];
@@ -172,25 +175,25 @@ int main()
         uint32_t *pixel = (uint32_t*)im;
 
         // Move each star
-        for (int c = 0; c < N; ++c) {
-            int newz = starz[c] - 2;
-            if (newz < 1) {
+        for (int s = 0; s < N; ++s) {
+            int newz = starz[s] - velocity;
+            if (newz < zclip) {
 rerandomize:
-                newz = fieldz;
-                starx[c] = lrintf(rand_float() * fieldx) - fieldx/2;
-                stary[c] = lrintf(rand_float() * fieldy) - fieldy/2;
+                newz = (int)fieldz + lrintf(rand_float() * 10.0f);
+                starx[s] = lrintf(rand_float() * fieldx) - fieldx/2;
+                stary[s] = lrintf(rand_float() * fieldy) - fieldy/2;
             }
-            starz[c] = newz;
+            starz[s] = newz;
             // Do perspective transformation
-            px[c] = (float)starx[c] * 200.0f / (float)starz[c];
-            py[c] = (float)stary[c] * 180.0f / (float)starz[c];
-            radius[c] = 900.0f / (float)(starz[c] - 1);
-            if ((fabsf(px[c]) + radius[c]) > hW*1.1f) goto rerandomize;
-            if ((fabsf(py[c]) + radius[c]) > hH*1.1f) goto rerandomize;
-            radsquared[c] = radius[c] * radius[c];
-            szfactor[c] = (1.0f - (float)starz[c] / 400.0f);
-            if ((szfactor[c]) < 0.0f) szfactor[c] = 0;
-            else szfactor[c] *= szfactor[c];
+            px[s] = (float)starx[s] * 200.0f / (float)starz[s];
+            py[s] = (float)stary[s] * 180.0f / (float)starz[s];
+            radius[s] = 900.0f / (float)(starz[s]);
+            //if ((fabsf(px[s]) + radius[s]) > 230) goto rerandomize;
+            //if ((fabsf(py[s]) + radius[s]) > 180) goto rerandomize;
+            radsquared[s] = radius[s] * radius[s];
+            szfactor[s] = (1.0f - (float)starz[s] / fieldz);
+            if ((szfactor[s]) < 0.0f) szfactor[s] = 0;
+            else szfactor[s] *= szfactor[s];
         }
 
         // Render each pixel
@@ -204,6 +207,9 @@ rerandomize:
                     float R = blur[bi][0];
                     float G = blur[bi][1];
                     float B = blur[bi][2];
+                    //float R = 0.0f;
+                    //float G = 0.0f;
+                    //float B = 0.0f;
                     for (int c = 0; c < N; ++c) {
                         float distx = (float)(x-hW) - px[c];
                         float disty = (float)(y-hH) - py[c];
@@ -223,7 +229,6 @@ rerandomize:
                     // Leak (some of) possible excess brightness to other color channels
                     // NOTE: This algorithm was fixed and improved after the Youtube video
                     float luma = R * 0.299f + G * 0.298f + B * 0.114f;
-                    float sat = 1.0f;
                     if (luma >= 1.0f) {
                         R = 1.0f; G = 1.0f; B = 1.0f;
                     }
@@ -231,6 +236,7 @@ rerandomize:
                         R = 0.0f; G = 0.0f; B = 0.0f;
                     }
                     else {
+                        float sat = 1.0f;
                         if (R > 1.0f) {
                             sat = min(sat, (luma - 1.0f)/ (luma - R));
                         }
@@ -310,7 +316,7 @@ rerandomize:
                     if (r_bb > 255.0f) r_bb = 255.0f;
                     if (g_bb > 255.0f) g_bb = 255.0f;
                     if (b_bb > 255.0f) b_bb = 255.0f;
-
+                    
                     color.r = (uint8_t)r_bb;
                     color.g = (uint8_t)g_bb;
                     color.b = (uint8_t)b_bb;
