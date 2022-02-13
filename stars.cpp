@@ -2,9 +2,6 @@
 #include <stdint.h>
 #include <math.h>
 
-#include <iostream>
-#include <vector>
-
 #include <omp.h>
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
@@ -30,8 +27,9 @@ union ABGRColor {
  *  variable$: string of characters variable
  * */
 const int pal_size = 253;
-float pal[pal_size][3];    // palette
-float palG[pal_size][3];   // gamma correct palette?
+const size_t csz = 3;              // Channel size, 3 colors
+float pal[pal_size][csz];    // palette
+float palG[pal_size][csz];   // gamma correct palette
 
 const float gamma = 2.2f, ungamma = 1.0f / gamma;
 
@@ -129,10 +127,10 @@ int main()
 
     // Generate stars
     const int N = 25000;
-    std::vector<int> starx(N), stary(N), starz(N);
-    std::vector<float> starR(N), starG(N), starB(N);
+    int starx[N], stary[N], starz[N];
+    float starR[N], starG[N], starB[N];
 
-    constexpr int W = 320, H = 200;
+    const int W = 320, H = 200;
     int hW = W/2, hH = H/2;
     float fieldx = 1000.0f;
     float fieldy = 1000.0f;
@@ -144,7 +142,7 @@ int main()
         starR[c] = rand_float() + 0.01f; starx[c] = lrintf(rand_float() * fieldx) - fieldx/2;
         starG[c] = rand_float() + 0.01f; stary[c] = lrintf(rand_float() * fieldy) - fieldy/2;
         starB[c] = rand_float() + 0.01f; starz[c] = lrintf(rand_float() * fieldz) + zclip;
-                                         //starz[c] = c % (int)fieldz + 1;
+                                         //starz[c] = (int)fieldz;
 
         // normalize hue (maximize brightness)
         float maxhue = starR[c];
@@ -155,14 +153,18 @@ int main()
         starB[c] *= 1.0f / maxhue;
     }
     // Main loop
-    std::vector<float> px(N), py(N), radius(N), radsquared(N), szfactor(N);
+    float *px = (float*)malloc(sizeof(float) * N);
+    float *py = (float*)malloc(sizeof(float) * N);
+    float *radius = (float*)malloc(sizeof(float) * N);
+    float *radsquared = (float*)malloc(sizeof(float) *N);
+    float *szfactor = (float*)malloc(sizeof(float) * N);
     // Blur buffer
-    constexpr int blur_sz = W * H;
-    std::vector<std::vector<float>> blur(blur_sz, std::vector<float>(3));
+    const int blur_sz = W * H;
+    float *blur = (float*)malloc(sizeof(float) * csz * blur_sz);
+    //std::vector<std::vector<float>> blur(blur_sz, std::vector<float>(3));
     const float ambient = 0.05f / sqrtf((float)N);
     float cop = 0.0f; // Center of Projection
     float vp = 0.0f;    // Vanishing Point
-
 
     int frames = 1440; // 1 sec at 24 frames
     for (int f = 0; f < frames; ++f) {
@@ -204,28 +206,28 @@ rerandomize:
 #pragma omp for schedule(static)
                 for (int x = 0; x < W; ++x) {
                     int bi = (y*W)+x;       // Buffer index
-                    float R = blur[bi][0];
-                    float G = blur[bi][1];
-                    float B = blur[bi][2];
+                    float R = blur[bi*csz];
+                    float G = blur[bi*csz + 1];
+                    float B = blur[bi*csz + 2];
                     //float R = 0.0f;
                     //float G = 0.0f;
                     //float B = 0.0f;
-                    for (int c = 0; c < N; ++c) {
-                        float distx = (float)(x-hW) - px[c];
-                        float disty = (float)(y-hH) - py[c];
+                    for (int s = 0; s < N; ++s) {
+                        float distx = (float)(x-hW) - px[s];
+                        float disty = (float)(y-hH) - py[s];
                         float distsquared = distx * distx + disty * disty;
-                        if (distsquared < radsquared[c]) {
+                        if (distsquared < radsquared[s]) {
                             float distance = sqrtf(distsquared);
-                            float scaleddist = distance / radius[c];
-                            float sz = (1.0f - sqrtf(scaleddist)) * szfactor[c];
-                            R += starR[c] * sz + ambient;
-                            G += starG[c] * sz + ambient;
-                            B += starB[c] * sz + ambient;
+                            float scaleddist = distance / radius[s];
+                            float sz = (1.0f - sqrtf(scaleddist)) * szfactor[s];
+                            R += starR[s] * sz + ambient;
+                            G += starG[s] * sz + ambient;
+                            B += starB[s] * sz + ambient;
                         }
                     }
-                    blur[bi][0] = R * 0.83f;
-                    blur[bi][1] = G * 0.83f;
-                    blur[bi][2] = B * 0.83f;
+                    blur[bi*csz]     = R * 0.83f;
+                    blur[bi*csz + 1] = G * 0.83f;
+                    blur[bi*csz + 2] = B * 0.83f;
                     // Leak (some of) possible excess brightness to other color channels
                     // NOTE: This algorithm was fixed and improved after the Youtube video
                     float luma = R * 0.299f + G * 0.298f + B * 0.114f;
