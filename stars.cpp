@@ -170,8 +170,8 @@ int main()
     const int N = 25000;
 
     Star *stars = (Star*)malloc(sizeof(Star) * N);
-    Star **valid_stars = (Star**)malloc(sizeof(Star*) * N);
-    int valid_stars_size = N;
+    Star **vstars = (Star**)malloc(sizeof(Star*) * N);
+    int vstars_size = N;
 
     const int W = 320, H = 200;
     int hW = W/2, hH = H/2;
@@ -240,10 +240,10 @@ int main()
             if ((fabsf(stars[s].py) + stars[s].radius) > 180) continue;
             //if (stars[s].z > vp) continue;
 
-            valid_stars[vsi] = stars + s;
+            vstars[vsi] = stars + s;
             vsi++;
         }
-        valid_stars_size = vsi;
+        vstars_size = vsi;
 
         // Render each pixel
         omp_set_num_threads(4);
@@ -258,87 +258,180 @@ int main()
                     float B = blur[bi*csz + 2];
 //#pragma omp simd
                     float xf = (float)(x-hW), yf = (float)(y-hH);
-                    for (int s = 0; s < valid_stars_size; ++s) {
-                        float distx = xf - valid_stars[s]->px;
-                        float disty = yf - valid_stars[s]->py;
+#define SIMD_ 1
+#if SIMD_ == 0
+                    for (int s = 0; s < vstars_size; ++s) {
+                        float distx = xf - vstars[s]->px;
+                        float disty = yf - vstars[s]->py;
                         float distsquared = distx * distx + disty * disty;
-                        //if (s == 0) printf("no_simd, distsquared < radsq...\n");
-                        //if (s < 8) printf("tf = %d\n", distsquared < valid_stars[s]->radsquared);
+                        //if (s < 8) printf("%d - %f\n", s, distsquared);
+                        //if (s < 8) printf("%d - %f, %f\n", s, distx, disty);
+                        //if (s < 8) printf("tf = %d\n", distsquared < vstars[s]->radsquared);
                         //if (s == 7) std::cin.ignore();
-                        if (distsquared < valid_stars[s]->radsquared) {
+                        if (distsquared < vstars[s]->radsquared) {
                             //printf("%d\n", s);
                             float distance = sqrtf(distsquared);
-                            float scaleddist = distance / valid_stars[s]->radius;
-                            float sz = (1.0f - sqrtf(scaleddist)) * valid_stars[s]->szfactor;
-                            R += valid_stars[s]->r * sz + ambient;
-                            G += valid_stars[s]->g * sz + ambient;
-                            B += valid_stars[s]->b * sz + ambient;
+                            float scaleddist = distance / vstars[s]->radius;
+                            float sz_sum = (1.0f - sqrtf(scaleddist)) * vstars[s]->szfactor + ambient;
+                            R += vstars[s]->r * sz_sum;
+                            G += vstars[s]->g * sz_sum;
+                            B += vstars[s]->b * sz_sum;
                             //std::cin.ignore();
                         }
                     }
-                    /*
-                    __m256 reg256ps00, reg256ps01, reg256ps02, reg256ps03;
-                    __m256 reg256ps04, reg256ps05, reg256ps06, reg256ps07;
-                    __m256 reg256ps08, reg256ps09, reg256ps10, reg256ps11;
-                    __m256 reg256ps12, reg256ps13, reg256ps14, reg256ps15;
+#elif SIMD_ == 1
+                    // NOTE(daniel): No speed gain in any of these SIMD versions.
+    #define SIMD_VER 2
+                    __m256 xf256 = _mm256_set1_ps(xf);
+                    __m256 yf256 = _mm256_set1_ps(yf);
 
-                    reg256ps00 = _mm256_set1_ps(xf); reg256ps01 = _mm256_set1_ps(yf);
+                    __m256 distx256, disty256, px256, py256;
+                    __m256 distsq256, radsq256, cmp_sq256;
 
                     float r_result[8];
                     float g_result[8];
                     float b_result[8];
-                    float test[8];
-                    for (int s = 7; s < valid_stars_size; s+=8) {
-                        // reg256ps02, reg256ps03 using
-                        reg256ps02 = _mm256_set_ps(
-                            valid_stars[s]->px,   valid_stars[s-1]->px,
-                            valid_stars[s-2]->px, valid_stars[s-3]->px,
-                            valid_stars[s-4]->px, valid_stars[s-5]->px,
-                            valid_stars[s-6]->px, valid_stars[s-7]->px
-                        );
-                        reg256ps03 = _mm256_set_ps(
-                            valid_stars[s]->py,   valid_stars[s-1]->py,
-                            valid_stars[s-2]->py, valid_stars[s-3]->py,
-                            valid_stars[s-4]->py, valid_stars[s-5]->py,
-                            valid_stars[s-6]->py, valid_stars[s-7]->py
-                        );
-                        //printf("simd, distx values:\ntf0 = %f\ntf1 = %f\ntf2 = %f\ntf3 = %f\ntf4 = %f\ntf5 = %f\ntf6 = %f\ntf7 = %f\n",
-                        //    *test, *(test+1), *(test+1), *(test+3), *(test+3), *(test+4), *(test+5), *(test+6), *(test+7));
-                        //std::cin.ignore();
-                        // reg256ps04, reg256ps05 using
-                        reg256ps04 = _mm256_sub_ps(reg256ps00, reg256ps02); // distx
-                        reg256ps05 = _mm256_sub_ps(reg256ps01, reg256ps03); // disty
-                        // reg256ps02, reg256ps03 free
+                    int test_ps[8];
+                    for (int s = 7; s < vstars_size; s+=8) {
+                        px256 = _mm256_set_ps(
+                            vstars[s]->px,   vstars[s-1]->px, vstars[s-2]->px, vstars[s-3]->px,
+                            vstars[s-4]->px, vstars[s-5]->px, vstars[s-6]->px, vstars[s-7]->px);
+                        py256 = _mm256_set_ps(
+                            vstars[s]->py,   vstars[s-1]->py, vstars[s-2]->py, vstars[s-3]->py,
+                            vstars[s-4]->py, vstars[s-5]->py, vstars[s-6]->py, vstars[s-7]->py);
+                        distx256 = _mm256_sub_ps(xf256, px256); // distx
+                        disty256 = _mm256_sub_ps(yf256, py256); // disty
 
-                        // distsquared: reg256ps02 using
-                        reg256ps02 = _mm256_add_ps(_mm256_mul_ps(reg256ps04, reg256ps04), _mm256_mul_ps(reg256ps05, reg256ps05));
-                        // reg256ps04, reg256ps05 are free
+                        distsq256 = _mm256_add_ps(_mm256_mul_ps(distx256, distx256), _mm256_mul_ps(disty256, disty256));
 
-                        _mm256_storeu_ps(test, reg256ps02);
-                        // Branchless madness
-                        // radsquared: rag256ps03 using
-                        reg256ps03 = _mm256_set_ps(
-                            valid_stars[s]->radsquared,   valid_stars[s-1]->radsquared,
-                            valid_stars[s-2]->radsquared, valid_stars[s-3]->radsquared,
-                            valid_stars[s-4]->radsquared, valid_stars[s-5]->radsquared,
-                            valid_stars[s-6]->radsquared, valid_stars[s-7]->radsquared
-                        );
+                        radsq256 = _mm256_set_ps(
+                            vstars[s]->radsquared,   vstars[s-1]->radsquared, vstars[s-2]->radsquared, vstars[s-3]->radsquared,
+                            vstars[s-4]->radsquared, vstars[s-5]->radsquared, vstars[s-6]->radsquared, vstars[s-7]->radsquared);
                         // mask
-                        reg256ps04 = _mm256_cmp_ps(reg256ps02, reg256ps03, _CMP_LT_OQ);
-                        // reg256ps03 free
+                        cmp_sq256 = _mm256_cmp_ps(distsq256, radsq256, _CMP_LT_OQ);
 
-                        _mm256_storeu_si256(distsqrt_gt_radsqrt+(s-7), _mm256_castps_si256(reg256ps04));
-                        _mm256_storeu_si256(distsquaredA+(s-7), _mm256_castps_si256(reg256ps02));
+    #if SIMD_VER == 0
+                        // NOTE(daniel): This calculation causes loss of quality, I'm not sure
+                        // where or why exactly, however, I think, it can  be the accumulation of
+                        // the float imprecision, the branchless nature of this piece of code.
+                        // This code branch deviates a few times to do the calculation, so a bunch
+                        // of unessecery operations, and zero sums are maded.
+                        __m256 scaleddist256, radius256, szsum256, const256, dist256;
+                        __m256 szfactor256, r256, g256, b256, ambient256;
+
+                        radius256 = _mm256_set_ps(
+                            vstars[s]->radius,   vstars[s-1]->radius, vstars[s-2]->radius, vstars[s-3]->radius,
+                            vstars[s-4]->radius, vstars[s-5]->radius, vstars[s-6]->radius, vstars[s-7]->radius);
+                        scaleddist256 = _mm256_div_ps(/* distance */_mm256_sqrt_ps(distsq256), radius256);
+
+                        szfactor256 = _mm256_set_ps(
+                            vstars[s]->szfactor,   vstars[s-1]->szfactor, vstars[s-2]->szfactor, vstars[s-3]->szfactor,
+                            vstars[s-4]->szfactor, vstars[s-5]->szfactor, vstars[s-6]->szfactor, vstars[s-7]->szfactor);
+                        const256 = _mm256_set1_ps(1.0f);
+                        ambient256 = _mm256_set1_ps(ambient);
+                        szsum256 = _mm256_add_ps(_mm256_mul_ps(_mm256_sub_ps(const256, _mm256_sqrt_ps(scaleddist256)), szfactor256), ambient256);
+
+                        const256 = _mm256_setzero_ps();
+                        r256 = _mm256_set_ps(
+                            vstars[s]->r,   vstars[s-1]->r, vstars[s-2]->r, vstars[s-3]->r,
+                            vstars[s-4]->r, vstars[s-5]->r, vstars[s-6]->r, vstars[s-7]->r);
+                        g256 = _mm256_set_ps(
+                            vstars[s]->g,   vstars[s-1]->g, vstars[s-2]->g, vstars[s-3]->g,
+                            vstars[s-4]->g, vstars[s-5]->g, vstars[s-6]->g, vstars[s-7]->g);
+                        b256 = _mm256_set_ps(
+                            vstars[s]->b,   vstars[s-1]->b, vstars[s-2]->b, vstars[s-3]->b,
+                            vstars[s-4]->b, vstars[s-5]->b, vstars[s-6]->b, vstars[s-7]->b);
+                        r256 = _mm256_blendv_ps(const256, _mm256_mul_ps(r256, szsum256), cmp_sq256);
+                        g256 = _mm256_blendv_ps(const256, _mm256_mul_ps(g256, szsum256), cmp_sq256);
+                        b256 = _mm256_blendv_ps(const256, _mm256_mul_ps(b256, szsum256), cmp_sq256);
+
+                        const256 = _mm256_setzero_ps();
+                        R += r256.m256_f32[0] + r256.m256_f32[1] + r256.m256_f32[2] + r256.m256_f32[3] + 
+                            r256.m256_f32[4] + r256.m256_f32[5] + r256.m256_f32[6] + r256.m256_f32[7];
+                        G += g256.m256_f32[0] + g256.m256_f32[1] + g256.m256_f32[2] + g256.m256_f32[3] + 
+                            g256.m256_f32[4] + g256.m256_f32[5] + g256.m256_f32[6] + g256.m256_f32[7];
+                        B += b256.m256_f32[0] + b256.m256_f32[1] + b256.m256_f32[2] + b256.m256_f32[3] + 
+                            b256.m256_f32[4] + b256.m256_f32[5] + b256.m256_f32[6] + b256.m256_f32[7];
+    #elif SIMD_VER == 1
+                        // NOTE(daniel): This branch is to mitgate the problem of the code above,
+                        // SIMD_VER 0, this makes more branch operation and less simd operation,
+                        // The code is a mix of branch and branchless code. This has the same
+                        // problem of SIMD_VER 0, however isolate alot of unecessary batches of 8.
+                        // This code may be less efficient than SIMD_VER 0 if many stars need to
+                        // calculate and if the distribution of stars is good
+                        __m256i cmp_sq256i;
+                        cmp_sq256i = _mm256_castps_si256(cmp_sq256);
+                        if (cmp_sq256i.m256i_u32[0] | cmp_sq256i.m256i_u32[1] | cmp_sq256i.m256i_u32[2] | cmp_sq256i.m256i_u32[3] |
+                            cmp_sq256i.m256i_u32[4] | cmp_sq256i.m256i_u32[5] | cmp_sq256i.m256i_u32[6] | cmp_sq256i.m256i_u32[7]) {
+                            __m256 scaleddist256, radius256, szsum256, const256, dist256;
+                            __m256 szfactor256, r256, g256, b256, ambient256;
+
+                            radius256 = _mm256_set_ps(
+                                vstars[s]->radius,   vstars[s-1]->radius, vstars[s-2]->radius, vstars[s-3]->radius,
+                                vstars[s-4]->radius, vstars[s-5]->radius, vstars[s-6]->radius, vstars[s-7]->radius);
+                            scaleddist256 = _mm256_div_ps(/* distance */_mm256_sqrt_ps(distsq256), radius256);
+
+                            szfactor256 = _mm256_set_ps(
+                                vstars[s]->szfactor,   vstars[s-1]->szfactor, vstars[s-2]->szfactor, vstars[s-3]->szfactor,
+                                vstars[s-4]->szfactor, vstars[s-5]->szfactor, vstars[s-6]->szfactor, vstars[s-7]->szfactor);
+                            const256 = _mm256_set1_ps(1.0f);
+                            ambient256 = _mm256_set1_ps(ambient);
+                            szsum256 = _mm256_add_ps(_mm256_mul_ps(_mm256_sub_ps(const256, _mm256_sqrt_ps(scaleddist256)), szfactor256), ambient256);
+
+                            const256 = _mm256_setzero_ps();
+                            r256 = _mm256_set_ps(
+                                vstars[s]->r,   vstars[s-1]->r, vstars[s-2]->r, vstars[s-3]->r,
+                                vstars[s-4]->r, vstars[s-5]->r, vstars[s-6]->r, vstars[s-7]->r);
+                            g256 = _mm256_set_ps(
+                                vstars[s]->g,   vstars[s-1]->g, vstars[s-2]->g, vstars[s-3]->g,
+                                vstars[s-4]->g, vstars[s-5]->g, vstars[s-6]->g, vstars[s-7]->g);
+                            b256 = _mm256_set_ps(
+                                vstars[s]->b,   vstars[s-1]->b, vstars[s-2]->b, vstars[s-3]->b,
+                                vstars[s-4]->b, vstars[s-5]->b, vstars[s-6]->b, vstars[s-7]->b);
+                            r256 = _mm256_blendv_ps(const256, _mm256_mul_ps(r256, szsum256), cmp_sq256);
+                            g256 = _mm256_blendv_ps(const256, _mm256_mul_ps(g256, szsum256), cmp_sq256);
+                            b256 = _mm256_blendv_ps(const256, _mm256_mul_ps(b256, szsum256), cmp_sq256);
+
+                            const256 = _mm256_setzero_ps();
+                            R += r256.m256_f32[0] + r256.m256_f32[1] + r256.m256_f32[2] + r256.m256_f32[3] + 
+                                r256.m256_f32[4] + r256.m256_f32[5] + r256.m256_f32[6] + r256.m256_f32[7];
+                            G += g256.m256_f32[0] + g256.m256_f32[1] + g256.m256_f32[2] + g256.m256_f32[3] + 
+                                g256.m256_f32[4] + g256.m256_f32[5] + g256.m256_f32[6] + g256.m256_f32[7];
+                            B += b256.m256_f32[0] + b256.m256_f32[1] + b256.m256_f32[2] + b256.m256_f32[3] + 
+                                b256.m256_f32[4] + b256.m256_f32[5] + b256.m256_f32[6] + b256.m256_f32[7];
+                        }
+    #elif SIMD_VER == 2
+                        // NOTE(daniel): This code is to suppress the lost of quality caused by
+                        // making this branchless.
+                        //_mm256_storeu_ps((float*)test_ps, reg256ps04);
+                        // TODO(daniel): Make the index more readable.
+                        __m256i cmp_sq256i;
+                        cmp_sq256i = _mm256_castps_si256(cmp_sq256);
+                        for (int i = 0; i < 8; ++i) {
+                            if (cmp_sq256i.m256i_u32[i]) {
+                                float distance = sqrtf(distsq256.m256_f32[i]);
+                                float scaleddist = distance / vstars[s-7+i]->radius;
+                                float sz_sum = (1.0f - sqrtf(scaleddist)) * vstars[s-7+i]->szfactor + ambient;
+                                
+                                R += vstars[s-7+i]->r * sz_sum;
+                                G += vstars[s-7+i]->g * sz_sum;
+                                B += vstars[s-7+i]->b * sz_sum;
+                            }
+                        }
+    #endif
+                    }
+#endif
+                    /*
                         // "Branch block"
                         // distance: reg256ps03 usigin
                         reg256ps03 = _mm256_rsqrt_ps(reg256ps02);
                         // reg256ps02 free
                         // radius: reg256ps05 using
                         reg256ps05 = _mm256_set_ps(
-                            valid_stars[s]->radius,   valid_stars[s-1]->radius,
-                            valid_stars[s-2]->radius, valid_stars[s-3]->radius,
-                            valid_stars[s-4]->radius, valid_stars[s-5]->radius,
-                            valid_stars[s-6]->radius, valid_stars[s-7]->radius
+                            vstars[s]->radius,   vstars[s-1]->radius,
+                            vstars[s-2]->radius, vstars[s-3]->radius,
+                            vstars[s-4]->radius, vstars[s-5]->radius,
+                            vstars[s-6]->radius, vstars[s-7]->radius
                         );
                         // scaleddist: reg256ps06
                         reg256ps06 = _mm256_div_ps(reg256ps03, reg256ps05);
@@ -347,10 +440,10 @@ int main()
                         reg256ps03 = _mm256_set1_ps(1.0f);
                         // szfactor: reg256ps05 using
                         reg256ps05 = _mm256_set_ps(
-                            valid_stars[s]->szfactor,   valid_stars[s-1]->szfactor,
-                            valid_stars[s-2]->szfactor, valid_stars[s-3]->szfactor,
-                            valid_stars[s-4]->szfactor, valid_stars[s-5]->szfactor,
-                            valid_stars[s-6]->szfactor, valid_stars[s-7]->szfactor
+                            vstars[s]->szfactor,   vstars[s-1]->szfactor,
+                            vstars[s-2]->szfactor, vstars[s-3]->szfactor,
+                            vstars[s-4]->szfactor, vstars[s-5]->szfactor,
+                            vstars[s-6]->szfactor, vstars[s-7]->szfactor
                         );
                         // sz: reg256ps02 using
                         reg256ps02 = _mm256_mul_ps(_mm256_sub_ps(reg256ps03, reg256ps06), reg256ps05);
@@ -361,22 +454,22 @@ int main()
 
                         // R, G, B result
                         reg256ps09 = _mm256_set_ps(
-                            valid_stars[s]->r,   valid_stars[s-1]->r,
-                            valid_stars[s-2]->r, valid_stars[s-3]->r,
-                            valid_stars[s-4]->r, valid_stars[s-5]->r,
-                            valid_stars[s-6]->r, valid_stars[s-7]->r
+                            vstars[s]->r,   vstars[s-1]->r,
+                            vstars[s-2]->r, vstars[s-3]->r,
+                            vstars[s-4]->r, vstars[s-5]->r,
+                            vstars[s-6]->r, vstars[s-7]->r
                         );
                         reg256ps10 = _mm256_set_ps(
-                            valid_stars[s]->g,   valid_stars[s-1]->g,
-                            valid_stars[s-2]->g, valid_stars[s-3]->g,
-                            valid_stars[s-4]->g, valid_stars[s-5]->g,
-                            valid_stars[s-6]->g, valid_stars[s-7]->g
+                            vstars[s]->g,   vstars[s-1]->g,
+                            vstars[s-2]->g, vstars[s-3]->g,
+                            vstars[s-4]->g, vstars[s-5]->g,
+                            vstars[s-6]->g, vstars[s-7]->g
                         );
                         reg256ps11 = _mm256_set_ps(
-                            valid_stars[s]->b,   valid_stars[s-1]->b,
-                            valid_stars[s-2]->b, valid_stars[s-3]->b,
-                            valid_stars[s-4]->b, valid_stars[s-5]->b,
-                            valid_stars[s-6]->b, valid_stars[s-7]->b
+                            vstars[s]->b,   vstars[s-1]->b,
+                            vstars[s-2]->b, vstars[s-3]->b,
+                            vstars[s-4]->b, vstars[s-5]->b,
+                            vstars[s-6]->b, vstars[s-7]->b
                         );
                         // result
                         reg256ps15 = _mm256_setzero_ps();
@@ -397,15 +490,15 @@ int main()
                         B += * b_result    + *(b_result+1) + *(b_result+2) + *(b_result+3) +
                              *(b_result+4) + *(b_result+5) + *(b_result+6) + *(b_result+7);
                     }
-                    for (int s = 0; s < valid_stars_size; ++s) {
+                    for (int s = 0; s < vstars_size; ++s) {
                         if (distsqrt_gt_radsqrt[s]) {
                             //printf("%d\n", s);
                             float distance = sqrtf(distsquaredA[s]);
-                            float scaleddist = distance / valid_stars[s]->radius;
-                            float sz = (1.0f - sqrtf(scaleddist)) * valid_stars[s]->szfactor;
-                            R += valid_stars[s]->r * sz + ambient;
-                            G += valid_stars[s]->g * sz + ambient;
-                            B += valid_stars[s]->b * sz + ambient;
+                            float scaleddist = distance / vstars[s]->radius;
+                            float sz = (1.0f - sqrtf(scaleddist)) * vstars[s]->szfactor;
+                            R += vstars[s]->r * sz + ambient;
+                            G += vstars[s]->g * sz + ambient;
+                            B += vstars[s]->b * sz + ambient;
                             //std::cin.ignore();
                         }
                     }
@@ -514,7 +607,7 @@ int main()
         }
 
         double etime = omp_get_wtime();
-        char buf[64]; sprintf(buf, "starfield%04d.jpg", f);
+        char buf[64]; sprintf(buf, "field%04d.jpg", f);
         fprintf(stderr, "Finished frame %d in %f seconds.\nWriting: \"%s\"\n", f, etime-stime, buf);
         stbi_write_jpg(buf, W, H, channels, im, 100);
         free(im);
