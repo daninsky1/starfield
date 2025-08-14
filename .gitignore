@@ -8,4 +8,6 @@
 *.png
 .vs/
 *.mp4
-
+out/
+.vscode
+.idea
