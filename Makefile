@@ -18,19 +18,13 @@ TARGET = starfield$(EXE_EXT)
 all: $(TARGET)
 
 $(TARGET): FORCE
-	g++ -O2 -std=c2x -pedantic -Wall -Wextra -mavx stars.c -o $(TARGET) -fopenmp
+	gcc -O2 -std=c11 -pedantic -Wall -Wextra -mavx starfield.c -o $(TARGET) -fopenmp
 	
 run:
 	./$(TARGET)
 
 clean:
-	rm -f $(TARGET) ./field*.jpg
-    
-# video:
-#     ffmpeg -framerate 30 -i output/field%04d.jpg -c:v libx264 -pix_f mt yuv420p demo.mp4
-    
-# gif:
-#     ffmpeg -framerate 10 -start_number 15 -i output/field%04d.jpg -vframes 30 -loop -0 demo.gif
+	rm -f $(TARGET) ./field*.png
     
 FORCE:
     

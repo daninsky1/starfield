@@ -6,10 +6,7 @@
 
 #include <immintrin.h>
 
-#define STB_IMAGE_WRITE_IMPLEMENTATION
-#include "stb_image_write.h"
-
-#if defined(_WIN32)
+#ifdef _WIN32
 #include <direct.h>
 #define mkdir(dir) _mkdir(dir)
 #else
@@ -17,6 +14,9 @@
 #include <sys/types.h>
 #define mkdir(dir) mkdir(dir, 0755)
 #endif
+
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "stb_image_write.h"
 
 
 /*  Fundamental QuickBasic types
@@ -27,11 +27,11 @@
  *  variable#: double-precision 64-bit floating-point
  *  variable$: string of characters
  */
-static const int N = 25000;         // Number of stars
-static const int PAL_SIZE = 253;
-static const size_t csz = 3;        // Channel size, 3 colors
-static float pal[PAL_SIZE][csz];    // palette
-static float palG[PAL_SIZE][csz];   // gamma correct palette
+#define N 25000                     // Number of stars
+#define PAL_SIZE 253                // Palette size
+#define CSZ 3                       // Channel size, 3 colors
+static float pal[PAL_SIZE][CSZ];    // Palette
+static float palG[PAL_SIZE][CSZ];   // Gamma correct palette
 
 static const float gamma = 2.2f, ungamma = 1.0f / gamma;
 
@@ -114,10 +114,11 @@ int main()
     uint32_t color_table[PAL_SIZE];
 
     for (int p = 0; p < PAL_SIZE; ++p) {
-        uint8_t *c = (uint8_t*)&quanti_colors[p];
-        uint8_t R = *(c+2);
-        uint8_t G = *(c+1);
-        uint8_t B = *(c);
+        uint32_t color_value = quanti_colors[p];
+        
+        uint8_t R = (color_value >> 0);
+        uint8_t G = (color_value >> 8);
+        uint8_t B = (color_value >> 16);
 
         ABGRColor col;
         col.b = B;
@@ -174,15 +175,11 @@ int main()
     // Main loop
     // Blur buffer
     const int blur_sz = W * H;
-    float *blur = (float*)malloc(sizeof(float) * csz * blur_sz);
+    float *blur = (float*)malloc(sizeof(float) * CSZ * blur_sz);
     const float ambient = 0.05f / sqrtf((float)N);
-    float cop = 0.0f;   // Center of Projection
-    int vp = 400;       // Is Vanishing Point the right nomenclature?
     
-    float *distsquaredA = (float*)malloc(sizeof(float) * N);
-    float *distsqrt_gt_radsqrt = (float*)malloc(sizeof(float) * N);
+    // int vanishing_point = 400;
 
-    printf("Begins...\n");
     int frames = 1440; // 1 sec at 24 frames
     const unsigned channels = 4;
     for (int f = 0; f < frames; ++f) {
@@ -214,7 +211,7 @@ int main()
 
             if ((fabsf(stars[s].px) + stars[s].radius) > 230) continue;
             if ((fabsf(stars[s].py) + stars[s].radius) > 180) continue;
-            //if (stars[s].z > vp) continue;
+            //if (stars[s].z > vanishing_point) continue;
 
             vstars[vsi] = stars + s;
             vsi++;
@@ -229,9 +226,9 @@ int main()
 #pragma omp for schedule(static)
                 for (int x = 0; x < W; ++x) {
                     int bi = (y*W)+x;       // Buffer index
-                    float R = blur[bi*csz];
-                    float G = blur[bi*csz + 1];
-                    float B = blur[bi*csz + 2];
+                    float R = blur[bi*CSZ];
+                    float G = blur[bi*CSZ + 1];
+                    float B = blur[bi*CSZ + 2];
 //#pragma omp simd
                     float xf = (float)(x-hW), yf = (float)(y-hH);
 #define SIMD_ 1
@@ -257,11 +254,7 @@ int main()
 
                     __m256 distx256, disty256, px256, py256;
                     __m256 distsq256, radsq256, cmp_sq256;
-
-                    float r_result[8];
-                    float g_result[8];
-                    float b_result[8];
-                    int test_ps[8];
+                    
                     for (int s = 7; s < vstars_size; s+=8) {
                         px256 = _mm256_set_ps(
                             vstars[s]->px,   vstars[s-1]->px, vstars[s-2]->px, vstars[s-3]->px,
@@ -393,9 +386,9 @@ int main()
     #endif
                     }
 #endif
-                    blur[bi*csz]     = R * 0.83f;
-                    blur[bi*csz + 1] = G * 0.83f;
-                    blur[bi*csz + 2] = B * 0.83f;
+                    blur[bi*CSZ]     = R * 0.83f;
+                    blur[bi*CSZ + 1] = G * 0.83f;
+                    blur[bi*CSZ + 2] = B * 0.83f;
                     // Leak (some of) possible excess brightness to other color channels
                     // NOTE: This algorithm was fixed and improved after the Youtube video
                     float luma = R * 0.299f + G * 0.298f + B * 0.114f;
@@ -436,7 +429,7 @@ int main()
                     float errorG = 0, gammaG = powf(G, gamma);
                     float errorB = 0, gammaB = powf(B, gamma);
                     // Create color candidate table
-                    int cand_list[cand_count];
+                    unsigned cand_list[cand_count];
                     for (int c = 0; c < cand_count; ++c) {
                         float tryR = powf(clamp(gammaR + errorR), ungamma);
                         float tryG = powf(clamp(gammaG + errorG), ungamma);
@@ -498,9 +491,9 @@ int main()
 
         double etime = omp_get_wtime();
         mkdir("output");
-        char buf[64]; sprintf(buf, "output/field%04d.jpg\n", f);
-        fprintf(stderr, "\"%s\" - %d in %f seconds.", buf, f, etime-stime);
-        stbi_write_jpg(buf, W, H, channels, im, 100);
+        char buf[64]; sprintf(buf, "output/field%04d.png", f);
+        fprintf(stderr, "\"%s\" - in %.2f seconds.\n", buf, etime-stime);
+        stbi_write_png(buf, W, H, channels, im, 100);
         free(im);
     }
 }
