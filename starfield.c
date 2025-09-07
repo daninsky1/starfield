@@ -492,7 +492,7 @@ int main()
         double etime = omp_get_wtime();
         mkdir("output");
         char buf[64]; sprintf(buf, "output/field%04d.png", f);
-        fprintf(stderr, "\"%s\" - in %.2f seconds.\n", buf, etime-stime);
+        fprintf(stderr, "\"%s\" - in %.2f seconds\n", buf, etime-stime);
         stbi_write_png(buf, W, H, channels, im, 100);
         free(im);
     }

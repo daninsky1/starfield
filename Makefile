@@ -18,7 +18,7 @@ TARGET = starfield$(EXE_EXT)
 all: $(TARGET)
 
 $(TARGET): FORCE
-	gcc -O2 -std=c11 -pedantic -Wall -Wextra -mavx starfield.c -o $(TARGET) -fopenmp
+	gcc -O2 -std=c11 -pedantic -Wall -Wextra -mavx starfield.c -o $(TARGET) -fopenmp -lm
 	
 run:
 	./$(TARGET)
