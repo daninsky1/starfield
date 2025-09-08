@@ -67,6 +67,10 @@ static const uint32_t quanti_colors[PAL_SIZE] = {
     0x003E3E2D, 0x003E3E36, 0x003F3F3F
 };
 
+enum { PNG, JPG };
+
+static const int mode = PNG; // Output image format
+
 typedef union ABGRColor {
     struct {
         uint8_t r;
@@ -491,9 +495,20 @@ int main()
 
         double etime = omp_get_wtime();
         mkdir("output");
-        char buf[64]; sprintf(buf, "output/field%04d.png", f);
+        const char* ext;
+        switch (mode) {
+            case JPG: { ext = "jpg"; break; }
+            case PNG: { ext = "png"; break; }
+            default: fprintf(stderr, "Unknown image format %d\n", mode); exit(1);
+        }
+        // char buf[64]; sprintf(buf, "output/field%04d.jpg", f);
+        char buf[64]; sprintf(buf, "output/field%04d.%s", f, ext);
         fprintf(stderr, "\"%s\" - in %.2f seconds\n", buf, etime-stime);
-        stbi_write_png(buf, W, H, channels, im, 100);
+        switch (mode) {
+            case JPG: { stbi_write_jpg(buf, W, H, channels, im, 100); break; }
+            case PNG: { stbi_write_png(buf, W, H, channels, im, 4*W); break; }
+            default: fprintf(stderr, "Unknown image format %d\n", mode); exit(1);
+        }
         free(im);
     }
 }
