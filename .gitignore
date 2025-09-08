@@ -4,11 +4,9 @@
 *.obj
 *.exe
 *.swp
-*.jpg
-*.png
 .vs/
 *.mp4
-out/
+output/
 .vscode
 .idea
 starfield
