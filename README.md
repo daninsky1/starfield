@@ -3,7 +3,7 @@
 This is port of [Joel Yliluoma’s QuickBasic dithering demo](https://bisqwit.iki.fi/story/howto/dither/jy/) to C, adding image export, multithreading.  
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/daninsky1/starfield/main/output.png" alt="Starfield output" width="600">
+  <img src="field0150.png" alt="Starfield output" width="600">
 </p>  
 
 I added the ability to export the final result as PNG or any format supported by the `stb_image_write` library.  
