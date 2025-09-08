@@ -219,7 +219,7 @@ int main()
         vstars_size = vsi;
 
         // Render each pixel
-        omp_set_num_threads(4);
+        omp_set_num_threads(omp_get_max_threads());
 #pragma omp parallel
         {
             for (int y = 0; y < H; ++y) {
